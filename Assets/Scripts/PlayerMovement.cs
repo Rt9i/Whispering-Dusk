@@ -9,12 +9,13 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private InputAction sprintAction;
 
     [Header("Settings")]
-    [SerializeField] private float walkSpeed   = 5f;
+    [SerializeField] private float walkSpeed = 5f;
     [SerializeField] private float sprintSpeed = 10f;
 
     [Header("Animation")]
     [SerializeField] private Animator animator;
     private readonly int animSpeedHash = Animator.StringToHash("Speed");
+    private readonly int animMotionHash = Animator.StringToHash("MotionSpeed");
 
     private CharacterController controller;
     private Vector2 moveInput;
@@ -38,7 +39,7 @@ public class PlayerMovement : MonoBehaviour
 
     private void Update()
     {
-        // 1. Read input
+        // 1. Read inputs
         moveInput = moveAction.ReadValue<Vector2>();
         bool isSprinting = sprintAction.IsPressed();
 
@@ -48,8 +49,13 @@ public class PlayerMovement : MonoBehaviour
         float targetSpeed = isSprinting ? sprintSpeed : walkSpeed;
         controller.Move(dir * targetSpeed * Time.deltaTime);
 
-        // 3. Animate: pass actual horizontal speed to the animator
-        float currentSpeed = new Vector3(controller.velocity.x, 0f, controller.velocity.z).magnitude;
-        animator.SetFloat(animSpeedHash, currentSpeed);
+        // 3. Animate: pass horizontal speed and motion multiplier
+        //    Speed: actual world speed for Blend Tree thresholds
+        float horizontalSpeed = new Vector3(controller.velocity.x, 0f, controller.velocity.z).magnitude;
+        animator.SetFloat(animSpeedHash, horizontalSpeed);
+
+        //    MotionSpeed: relative input magnitude [0…1] controls playback rate
+        float motionSpeed = moveInput.magnitude;
+        animator.SetFloat(animMotionHash, motionSpeed);
     }
 }

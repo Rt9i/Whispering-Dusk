@@ -5,8 +5,10 @@ using UnityEngine.InputSystem;
 public class PlayerCameraController : MonoBehaviour
 {
     [Header("References")]
-    [SerializeField] private Transform headBone;    // rig head bone
-    [SerializeField] private Transform cameraRoot;  // child of headBone
+    [Tooltip("Rig head bone")]
+    [SerializeField] private Transform headBone;
+    [Tooltip("Camera root; child of PlayerArmature or EyePivot")]
+    [SerializeField] private Transform cameraRoot;
 
     [Header("Spine Bones (bottom→top)")]
     [SerializeField] private Transform[] spineBones;
@@ -18,66 +20,103 @@ public class PlayerCameraController : MonoBehaviour
 
     [Header("Settings")]
     [SerializeField] private float mouseSensitivity = 10f;
-    [SerializeField] private float minPitch = -90f;
-    [SerializeField] private float maxPitch = 90f;
 
-    [Header("Head Settings")]
-    [SerializeField, Range(0f, 1f)] private float headWeight = 0.643f;
-    [SerializeField, Range(-90f, 0f)] private float headMinPitch = -75f;
-    [SerializeField, Range(0f, 90f)] private float headMaxPitch = 43.4f;
+    [Header("Camera Limits")]
+    [Tooltip("Lowest angle camera can pitch (degrees)")]
+    [SerializeField, Range(-180f, 0f)] private float cameraMinPitch = -90f;
+    [Tooltip("Highest angle camera can pitch (degrees)")]
+    [SerializeField, Range(0f, 180f)]  private float cameraMaxPitch =  90f;
+    [Tooltip("Extra look-down angle beyond head limits")]
+    [SerializeField, Range(0f,45f)]    private float extraDownAngle = 15f;
 
-    private float yaw;
-    private float pitch;
+    [Header("Mesh Bend Settings")]
+    [SerializeField, Range(0f,1f), Tooltip("0=no head bend, 1=full pitch")]
+    private float headWeight    = 0.643f;
+    [SerializeField, Range(-90f,0f)] private float headMinPitch = -75f;
+    [SerializeField, Range(0f,90f)]  private float headMaxPitch =  43.4f;
 
-    private float initialHeadZ;       // initial local rotation Z of headBone
-    private float[] initialSpineZ;    // initial local rotation Z of each spineBone
+    [Header("Camera Smoothing")]
+    [Tooltip("Time for camera to catch up to target pitch")]
+    [SerializeField] private float smoothTime = 0.1f;
+
+    private float yaw, pitch;
+    private float initialHeadX;
+    private float[] initialSpineX;
+    private Vector3 cameraOffset;
+
+    // smoothing state
+    private float currentPitch;
+    private float currentPitchVelocity;
 
     void Awake()
     {
-        // cache initial local Z (pitch axis) for head and spine
-        initialHeadZ = headBone.localEulerAngles.z;
-        initialSpineZ = new float[spineBones.Length];
+        // cache initial X-rotation for head + spine bones
+        initialHeadX  = headBone.localEulerAngles.x;
+        initialSpineX = new float[spineBones.Length];
         for (int i = 0; i < spineBones.Length; i++)
-            initialSpineZ[i] = spineBones[i].localEulerAngles.z;
+            initialSpineX[i] = spineBones[i].localEulerAngles.x;
+
+        // cache camera offset relative to headBone
+        cameraOffset = headBone.InverseTransformPoint(cameraRoot.position);
+
+        // initialize smoothing so camera doesn't jump on start
+        currentPitch = 0f;
+        currentPitchVelocity = 0f;
 
         Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        Cursor.visible   = false;
     }
 
-    void OnEnable() => lookAction.Enable();
+    void OnEnable()  => lookAction.Enable();
     void OnDisable() => lookAction.Disable();
 
     void Update()
     {
         // read look input
         Vector2 li = lookAction.ReadValue<Vector2>();
-        yaw += li.x * mouseSensitivity * Time.deltaTime;
+        yaw   += li.x * mouseSensitivity * Time.deltaTime;
         pitch -= li.y * mouseSensitivity * Time.deltaTime;
-        pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
 
-        // rotate body (yaw)
+        // apply camera-specific pitch limits with extra down angle
+        float camMin = cameraMinPitch - extraDownAngle;
+        float camMax = cameraMaxPitch;
+        pitch = Mathf.Clamp(pitch, camMin, camMax);
+
+        // rotate player body around Y
         transform.rotation = Quaternion.Euler(0f, yaw, 0f);
     }
 
     void LateUpdate()
     {
-        // clamp how much head bends relative to full pitch
+        // 1) position camera at eye-level
+        cameraRoot.position = headBone.TransformPoint(cameraOffset);
+
+        // 2) smooth raw pitch into currentPitch
+        currentPitch = Mathf.SmoothDamp(
+            currentPitch,
+            pitch,
+            ref currentPitchVelocity,
+            smoothTime
+        );
+
+        // 3) apply smoothed pitch to camera
+        cameraRoot.localRotation = Quaternion.Euler(currentPitch, 0f, 0f);
+
+        // 4) compute head-bend for mesh (limited by headWeight)
         float headPitch = Mathf.Clamp(pitch * headWeight, headMinPitch, headMaxPitch);
 
-        // distribute headPitch over spine
+        // 5) distribute bend over spine bones (X-axis)
         for (int i = 0; i < spineBones.Length; i++)
         {
             float w = (i < spineWeights.Length) ? spineWeights[i] : 0f;
             Vector3 e = spineBones[i].localEulerAngles;
-            e.z = initialSpineZ[i] + headPitch * w;
+            e.x = initialSpineX[i] + headPitch * w;
             spineBones[i].localEulerAngles = e;
         }
 
-        // apply head bend (pitch) on headBone using Z axis
+        // 6) bend the head bone itself (X-axis)
         Vector3 h = headBone.localEulerAngles;
-        h.z = initialHeadZ + headPitch;
+        h.x = initialHeadX + headPitch;
         headBone.localEulerAngles = h;
-
-        // cameraRoot inherits headBone’s transform automatically
     }
 }
